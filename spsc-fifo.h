@@ -11,10 +11,10 @@
 
    Options:
      #define SPSC_FIFO_STATIC                - if static functions are preferred
-     #define SPSC_FIFO_NDEBUG                - disable thread safety debugging (disabled by default with #define NDEBUG)
+     #define SPSC_FIFO_NDEBUG                - disable thread safety debugging
      #define SPSC_FIFO_ASSERT(expr)          - override default assert implementation (default: assert)
      #define SPSC_FIFO_ALLOC(sz)             - override default memory allocation implementation (default: malloc)
-     #define SPSC_FIFO_DEALLOC(p)            - override default memory deallocation implementation (default: free)
+     #define SPSC_FIFO_FREE(p)               - override default memory deallocation implementation (default: free)
      #define SPSC_FIFO_CACHE_LINE_SIZE       - override default cache line size (default: 64 bytes)
      #define SPSC_FIFO_DEFAULT_BUF_ALIGNMENT - override default buffer alignment (default: _Alignof(max_align_t))
 
@@ -51,7 +51,7 @@ enum spsc_fifo_alloc_status {
 /* General management functions */
 SPSC_FIFO_DEF int  spsc_fifo_alloc        (spsc_fifo **fifo, spsc_fifo_usize min_capacity);
 SPSC_FIFO_DEF int  spsc_fifo_aligned_alloc(spsc_fifo **fifo, spsc_fifo_usize min_capacity, spsc_fifo_usize buf_alignment);
-SPSC_FIFO_DEF void spsc_fifo_dealloc      (spsc_fifo **fifo);
+SPSC_FIFO_DEF void spsc_fifo_free         (spsc_fifo **fifo);
 SPSC_FIFO_DEF void spsc_fifo_reset        (spsc_fifo  *fifo);
 
 /* Debugging functions */
@@ -76,7 +76,7 @@ SPSC_FIFO_DEF bool            spsc_fifo_write_n    (spsc_fifo *fifo, const spsc_
 
 /* Convenience macros for reading/writing typed values (objects) */
 #undef spsc_fifo_skip_obj
-#define spsc_fifo_skip_obj(fifo_ptr, obj_ptr)  spsc_fifo_skip_n ((fifo_ptr), (spsc_fifo_byte*)(obj_ptr), sizeof(*(obj_ptr)))
+#define spsc_fifo_skip_obj(fifo_ptr, obj_ptr)  spsc_fifo_skip_n ((fifo_ptr), sizeof(*(obj_ptr)))
 #undef spsc_fifo_read_obj
 #define spsc_fifo_read_obj(fifo_ptr, obj_ptr)  spsc_fifo_read_n ((fifo_ptr), (spsc_fifo_byte*)(obj_ptr), sizeof(*(obj_ptr)))
 #undef spsc_fifo_peek_obj
@@ -113,7 +113,6 @@ typedef uintptr_t spsc_fifo_uptr;
 #undef SPSC_FIFO_IGNORE
 #define SPSC_FIFO_IGNORE(x) (void)(x)
 
-/* Macros which can be overwritten */
 #ifndef SPSC_FIFO_ASSERT
 #define SPSC_FIFO_ASSERT(expr) assert(expr)
 #endif
@@ -122,8 +121,8 @@ typedef uintptr_t spsc_fifo_uptr;
 #define SPSC_FIFO_ALLOC(sz) malloc(sz)
 #endif
 
-#ifndef SPSC_FIFO_DEALLOC
-#define SPSC_FIFO_DEALLOC(p) free(p)
+#ifndef SPSC_FIFO_FREE
+#define SPSC_FIFO_FREE(p) free(p)
 #endif
 
 #ifndef SPSC_FIFO_CACHE_LINE_SIZE
@@ -169,19 +168,17 @@ typedef uintptr_t spsc_fifo_uptr;
 #endif
 
 #undef SPSC_FIFO_THREAD_SAFETY_DEBUG
-#if !defined(NDEBUG) && !defined(SPSC_FIFO_NDEBUG)
-    #if defined(__unix__) || defined(__unix) || defined(__linux__) || defined(__APPLE__)
-        #define SPSC_FIFO_THREAD_SAFETY_DEBUG
-        #include <pthread.h>
-    #endif
+#ifndef SPSC_FIFO_NDEBUG
+#define SPSC_FIFO_THREAD_SAFETY_DEBUG
+#include <threads.h>
 #endif
 
 struct spsc_fifo {
 #ifdef SPSC_FIFO_THREAD_SAFETY_DEBUG
     bool producer_bound;
     bool consumer_bound;
-    pthread_t      producer_thread;
-    pthread_t      consumer_thread;
+    thrd_t producer_thrd;
+    thrd_t consumer_thrd;
 #endif
     spsc_fifo_usize capacity;
     spsc_fifo_usize mask;
@@ -196,13 +193,13 @@ struct spsc_fifo {
 #define SPSC_FIFO_ASSERT_PRODUCER_THREAD(fifo_ptr)                                        \
     do {                                                                                  \
         if ((fifo_ptr)->producer_bound) {                                                 \
-            SPSC_FIFO_ASSERT(pthread_equal((fifo_ptr)->producer_thread, pthread_self())); \
+            SPSC_FIFO_ASSERT(thrd_equal((fifo_ptr)->producer_thrd, thrd_current()));      \
         }                                                                                 \
     } while (0)
 #define SPSC_FIFO_ASSERT_CONSUMER_THREAD(fifo_ptr)                                        \
     do {                                                                                  \
         if ((fifo_ptr)->consumer_bound) {                                                 \
-            SPSC_FIFO_ASSERT(pthread_equal((fifo_ptr)->consumer_thread, pthread_self())); \
+            SPSC_FIFO_ASSERT(thrd_equal((fifo_ptr)->consumer_thrd, thrd_current()));      \
         }                                                                                 \
     } while (0)
 #else
@@ -266,12 +263,12 @@ SPSC_FIFO_IMPL int spsc_fifo_aligned_alloc(spsc_fifo **fifo, spsc_fifo_usize min
     return spsc_fifo_alloc_success;
 }
 
-SPSC_FIFO_IMPL void spsc_fifo_dealloc(spsc_fifo **fifo) {
+SPSC_FIFO_IMPL void spsc_fifo_free(spsc_fifo **fifo) {
     if (*fifo == NULL) {
         return;
     }
 
-    SPSC_FIFO_DEALLOC(*fifo);
+    SPSC_FIFO_FREE(*fifo);
     *fifo = NULL;
 }
 
@@ -282,8 +279,8 @@ SPSC_FIFO_IMPL void spsc_fifo_reset(spsc_fifo *fifo) {
 
 SPSC_FIFO_IMPL void spsc_fifo_bind_producer(spsc_fifo *fifo) {
 #ifdef SPSC_FIFO_THREAD_SAFETY_DEBUG
-    fifo->producer_thread = pthread_self();
-    fifo->producer_bound  = true;
+    fifo->producer_thrd  = thrd_current();
+    fifo->producer_bound = true;
 #else
     SPSC_FIFO_IGNORE(fifo);
 #endif
@@ -291,8 +288,8 @@ SPSC_FIFO_IMPL void spsc_fifo_bind_producer(spsc_fifo *fifo) {
 
 SPSC_FIFO_IMPL void spsc_fifo_bind_consumer(spsc_fifo *fifo) {
 #ifdef SPSC_FIFO_THREAD_SAFETY_DEBUG
-    fifo->consumer_thread = pthread_self();
-    fifo->consumer_bound  = true;
+    fifo->consumer_thrd  = thrd_current();
+    fifo->consumer_bound = true;
 #else
     SPSC_FIFO_IGNORE(fifo);
 #endif

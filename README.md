@@ -24,7 +24,7 @@ Define these before including the header to customize behavior:
 - `SPSC_FIFO_NDEBUG`: Disable thread safety debugging
 - `SPSC_FIFO_ASSERT(expr)`: Override assert implementation
 - `SPSC_FIFO_ALLOC(sz)`: Override memory allocation
-- `SPSC_FIFO_DEALLOC(p)`: Override memory deallocation
+- `SPSC_FIFO_FREE(p)`: Override memory deallocation
 - `SPSC_FIFO_CACHE_LINE_SIZE`: Set cache line size (default: 64 bytes)
 - `SPSC_FIFO_DEFAULT_BUF_ALIGNMENT`: Set default buffer alignment
 
@@ -34,7 +34,7 @@ Define these before including the header to customize behavior:
 
 - `spsc_fifo_alloc`: Allocate FIFO with default alignment
 - `spsc_fifo_aligned_alloc`: Allocate FIFO with custom buffer alignment
-- `spsc_fifo_dealloc`: Free FIFO resources
+- `spsc_fifo_free`: Free FIFO resources
 - `spsc_fifo_reset`: Reset FIFO to empty state
 
 ### Producer Functions

@@ -1,8 +1,8 @@
-#include <pthread.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <threads.h>
 #include "../spsc-fifo.h"
 
 #define array(T, N) typeof(T[N])
@@ -25,7 +25,7 @@ spsc_fifo *fifo;
 
 atomic_bool producer_done = false;
 
-void *produce(void *arg) {
+int produce(void *arg) {
     ignore arg;
     spsc_fifo_bind_producer(fifo);
 
@@ -42,10 +42,10 @@ void *produce(void *arg) {
 
     atomic_store(&producer_done, true);
 
-    return NULL;
+    return EXIT_SUCCESS;
 }
 
-void *consume(void *arg) {
+int consume(void *arg) {
     ignore arg;
     spsc_fifo_bind_consumer(fifo);
 
@@ -62,37 +62,47 @@ void *consume(void *arg) {
         }
     }
 
-    return NULL;
+    return EXIT_SUCCESS;
 }
 
 int main(void) {
+    int status = EXIT_SUCCESS;
+
     if (spsc_fifo_aligned_alloc(&fifo, FIFO_SIZE, _Alignof(struct message)) != spsc_fifo_alloc_success) {
         fprintf(stderr, "failed to allocate fifo");
-        return EXIT_FAILURE;
+        status = EXIT_FAILURE;
+        goto out;
     }
 
-    pthread_t producer;
-    pthread_t consumer;
+    thrd_t producer;
+    thrd_t consumer;
 
-    if (pthread_create(&producer, NULL, produce, NULL) != 0) {
+    if (thrd_create(&producer, produce, NULL) != 0) {
         fprintf(stderr, "failed to create producer");
-        return EXIT_FAILURE;
+        status = EXIT_FAILURE;
+        goto fifo_out;
     }
 
-    if (pthread_create(&consumer, NULL, consume, NULL) != 0) {
+    if (thrd_create(&consumer, consume, NULL) != 0) {
         fprintf(stderr, "failed to create consumer");
-        return EXIT_FAILURE;
+        status = EXIT_FAILURE;
+        goto fifo_out;
     }
 
-    if (pthread_join(producer, NULL) != 0) {
+    if (thrd_join(producer, NULL) != 0) {
         fprintf(stderr, "failed to join producer");
-        return EXIT_FAILURE;
+        status = EXIT_FAILURE;
+        goto fifo_out;
     }
 
-    if (pthread_join(consumer, NULL) != 0) {
+    if (thrd_join(consumer, NULL) != 0) {
         fprintf(stderr, "failed to join consumer");
-        return EXIT_FAILURE;
+        status = EXIT_FAILURE;
+        goto fifo_out;
     }
 
-    return EXIT_SUCCESS;
+fifo_out:
+    spsc_fifo_free(&fifo);
+out:
+    return status;
 }
