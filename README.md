@@ -14,7 +14,7 @@ A single-header, lock-free FIFO queue designed specifically for single-producer/
 ## Usage
 
 1. Include the header in your project
-2. Define `SPSC_FIFO_IMPLEMENTATION` in exactly one source file:
+2. Define `SPSC_FIFO_IMPLEMENTATION` in exactly one source file
 
 ## Configuration Options
 
