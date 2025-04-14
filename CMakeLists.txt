@@ -30,4 +30,4 @@ endfunction()
 detect_cache_line_size(CACHE_LINE_SIZE)
 add_compile_definitions(CACHE_LINE_SIZE=${CACHE_LINE_SIZE})
 
-add_executable(spsc example/spsc.c example/spsc-fifo.c)
+add_executable(spsc examples/spsc.c examples/spsc-fifo.c)
